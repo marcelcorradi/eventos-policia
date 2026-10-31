@@ -120,3 +120,26 @@ export function PeriodPicker({
     </div>
   )
 }
+
+/** Texto do período para colocar nas buscas (ex.: "amanhã", "novembro"). */
+export function periodSearchText(p: Period) {
+  switch (p.key) {
+    case "hoje":
+      return "hoje"
+    case "amanha":
+      return "amanhã"
+    case "fds":
+      return "fim de semana"
+    case "semana":
+      return "esta semana"
+    case "mes":
+      return format(new Date(`${p.from}T12:00:00`), "MMMM yyyy", { locale: ptBR })
+    case "custom":
+      return describePeriod(p)
+  }
+}
+
+/** Quantos dias de notícias olhar para trás. */
+export function newsDays(p: Period) {
+  return p.key === "mes" || p.key === "custom" ? 30 : 7
+}

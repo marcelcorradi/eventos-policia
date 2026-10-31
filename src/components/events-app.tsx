@@ -1,24 +1,54 @@
 "use client"
 
 import * as React from "react"
-import { format } from "date-fns"
+import { format, formatDistanceToNow, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { AlertCircle, Bookmark, Loader2, Radar, Search, Trash2 } from "lucide-react"
+import {
+  AlertCircle,
+  Bookmark,
+  BookmarkCheck,
+  CalendarDays,
+  Clock,
+  ExternalLink,
+  MapPin,
+  Navigation,
+  Newspaper,
+  Pencil,
+  Plus,
+  Radar,
+  RefreshCw,
+  Search,
+  Share2,
+  Trash2,
+} from "lucide-react"
 import type { DateRange } from "react-day-picker"
 import { toast } from "sonner"
 
-import { EventCard } from "@/components/event-card"
 import {
-  describePeriod,
+  newsDays,
   PeriodPicker,
+  periodSearchText,
   resolvePeriod,
   type PeriodKey,
 } from "@/components/period-picker"
+import {
+  newSavedEvent,
+  SavedEventDialog,
+  type SavedEvent,
+} from "@/components/saved-event-dialog"
 import { DEFAULT_SETTINGS, SettingsSheet, type Settings } from "@/components/settings-sheet"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -30,97 +60,117 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocalStorage } from "@/hooks/use-local-storage"
-import { CATEGORIES, type EventItem, type SearchResponse } from "@/lib/events"
+import { buildLinks } from "@/lib/links"
+import { TOPICS, type NewsItem, type TopicKey } from "@/lib/topics"
 
-const LOADING_MESSAGES = [
-  "Pesquisando no Google…",
-  "Olhando perfis do Instagram…",
-  "Checando agenda da prefeitura…",
-  "Procurando shows e festas…",
-  "Buscando manifestações e protestos…",
-  "Verificando portais de notícia locais…",
-  "Organizando os resultados…",
-]
+type NewsState =
+  | { key: string; status: "ok"; items: NewsItem[] }
+  | { key: string; status: "error"; message: string }
 
-type LastSearch = SearchResponse & { label: string; place: string }
+async function shareText(title: string, text: string) {
+  try {
+    if (navigator.share) await navigator.share({ title, text })
+    else {
+      await navigator.clipboard.writeText(text)
+      toast.success("Copiado")
+    }
+  } catch {
+    /* cancelado */
+  }
+}
+
+function formatDay(date: string) {
+  const s = format(parseISO(date), "EEE, dd 'de' MMM", { locale: ptBR })
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
 
 export function EventsApp() {
   const [settings, setSettings] = useLocalStorage<Settings>("settings", DEFAULT_SETTINGS)
-  const [saved, setSaved] = useLocalStorage<EventItem[]>("saved-events", [])
-  const [last, setLast] = useLocalStorage<LastSearch | null>("last-search", null)
+  const [saved, setSaved] = useLocalStorage<SavedEvent[]>("saved-events-v2", [])
 
+  const [tab, setTab] = React.useState("buscar")
   const [periodKey, setPeriodKey] = React.useState<PeriodKey>("hoje")
   const [range, setRange] = React.useState<DateRange | undefined>()
-  const [category, setCategory] = React.useState("todos")
-  const [query, setQuery] = React.useState("")
-  const [loading, setLoading] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
-  const [msgIndex, setMsgIndex] = React.useState(0)
-  const [tab, setTab] = React.useState("buscar")
+  const [topic, setTopic] = React.useState<TopicKey>("todos")
+  const [keyword, setKeyword] = React.useState("")
+  const [appliedKeyword, setAppliedKeyword] = React.useState("")
+  const [reload, setReload] = React.useState(0)
+  const [news, setNews] = React.useState<NewsState | null>(null)
+  const [editing, setEditing] = React.useState<SavedEvent | null>(null)
+
+  const period = resolvePeriod(periodKey, range)
+  const days = newsDays(period)
+  const newsKey = JSON.stringify([settings.city, topic, days, appliedKeyword, reload])
+  const newsLoading = news?.key !== newsKey
 
   React.useEffect(() => {
-    if (!loading) return
-    const t = setInterval(
-      () => setMsgIndex((i) => Math.min(i + 1, LOADING_MESSAGES.length - 1)),
-      7000,
-    )
-    return () => clearInterval(t)
-  }, [loading])
+    const ctrl = new AbortController()
+    const qs = new URLSearchParams({
+      city: settings.city,
+      topic,
+      days: String(days),
+      ...(appliedKeyword ? { q: appliedKeyword } : {}),
+    })
+    fetch(`/api/news?${qs}`, { signal: ctrl.signal })
+      .then(async (res) => {
+        const data = await res.json().catch(() => null)
+        if (!res.ok || !data) throw new Error(data?.error ?? "Falha ao carregar notícias.")
+        setNews({ key: newsKey, status: "ok", items: data.items })
+      })
+      .catch((e: unknown) => {
+        if (ctrl.signal.aborted) return
+        setNews({
+          key: newsKey,
+          status: "error",
+          message: e instanceof Error ? e.message : "Falha ao carregar notícias.",
+        })
+      })
+    return () => ctrl.abort()
+  }, [newsKey, settings.city, topic, days, appliedKeyword])
 
-  const savedIds = React.useMemo(() => new Set(saved.map((e) => e.id)), [saved])
+  const links = buildLinks({
+    city: settings.city,
+    state: settings.state,
+    topic,
+    periodText: periodSearchText(period),
+    keyword: appliedKeyword,
+  })
 
-  function toggleSave(event: EventItem) {
-    if (savedIds.has(event.id)) {
-      setSaved((prev) => prev.filter((e) => e.id !== event.id))
-      toast("Removido dos salvos")
-    } else {
-      setSaved((prev) =>
-        [...prev, event].sort((a, b) => a.date.localeCompare(b.date)),
-      )
-      toast.success("Evento salvo neste aparelho")
-    }
+  const savedUrls = React.useMemo(
+    () => new Set(saved.map((e) => e.url).filter(Boolean)),
+    [saved],
+  )
+
+  function upsert(ev: SavedEvent) {
+    setSaved((prev) => {
+      const rest = prev.filter((e) => e.id !== ev.id)
+      return [...rest, ev]
+    })
+    setEditing(null)
+    toast.success("Evento salvo neste aparelho")
   }
 
-  async function search() {
-    const period = resolvePeriod(periodKey, range)
-    setMsgIndex(0)
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await fetch("/api/search", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(settings.accessCode ? { "x-access-code": settings.accessCode } : {}),
-        },
-        body: JSON.stringify({
-          city: settings.city,
-          state: settings.state,
-          from: period.from,
-          to: period.to,
-          category,
-          query: query.trim() || undefined,
-        }),
-      })
-      const data = await res.json().catch(() => null)
-      if (!res.ok || !data) {
-        throw new Error(data?.error ?? "Não foi possível buscar agora.")
-      }
-      setLast({
-        ...(data as SearchResponse),
-        label: describePeriod(period),
-        place: `${settings.city} - ${settings.state}`,
-      })
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro desconhecido.")
-    } finally {
-      setLoading(false)
+  function saveNews(item: NewsItem) {
+    if (savedUrls.has(item.url)) {
+      setSaved((prev) => prev.filter((e) => e.url !== item.url))
+      toast("Removido dos salvos")
+      return
     }
+    setSaved((prev) => [
+      ...prev,
+      newSavedEvent({ title: item.title, url: item.url, source: item.source }),
+    ])
+    toast.success("Salvo — abra em Salvos para pôr data e local", {
+      action: { label: "Ver", onClick: () => setTab("salvos") },
+    })
   }
 
   const today = format(new Date(), "yyyy-MM-dd")
-  const upcomingSaved = saved.filter((e) => (e.endDate ?? e.date) >= today)
-  const pastSaved = saved.filter((e) => (e.endDate ?? e.date) < today)
+  const sortedSaved = [...saved].sort((a, b) =>
+    `${a.date ?? "9999"} ${a.time ?? ""}`.localeCompare(`${b.date ?? "9999"} ${b.time ?? ""}`),
+  )
+  const upcoming = sortedSaved.filter((e) => !e.date || e.date >= today)
+  const past = sortedSaved.filter((e) => e.date && e.date < today)
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-xl flex-col">
@@ -151,7 +201,8 @@ export function EventsApp() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="buscar" className="space-y-4">
+        {/* ------------------------------ BUSCAR ------------------------------ */}
+        <TabsContent value="buscar" className="space-y-5 pb-6">
           <Card className="gap-3 py-4">
             <CardContent className="space-y-3 px-4">
               <PeriodPicker
@@ -163,131 +214,190 @@ export function EventsApp() {
                 }}
               />
               <div className="grid grid-cols-2 gap-2">
-                <Select value={category} onValueChange={setCategory}>
+                <Select value={topic} onValueChange={(v) => setTopic(v as TopicKey)}>
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="todos">Todos os tipos</SelectItem>
-                    {Object.entries(CATEGORIES).map(([k, v]) => (
+                    {Object.entries(TOPICS).map(([k, v]) => (
                       <SelectItem key={k} value={k}>
-                        {v}
+                        {v.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <Input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Palavra-chave"
-                  onKeyDown={(e) => e.key === "Enter" && !loading && search()}
-                />
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    setAppliedKeyword(keyword.trim())
+                  }}
+                >
+                  <Input
+                    value={keyword}
+                    onChange={(e) => setKeyword(e.target.value)}
+                    onBlur={() => setAppliedKeyword(keyword.trim())}
+                    placeholder="Palavra-chave"
+                    enterKeyHint="search"
+                  />
+                </form>
               </div>
-              <Button className="w-full" size="lg" onClick={search} disabled={loading}>
-                {loading ? <Loader2 className="animate-spin" /> : <Search />}
-                {loading ? "Buscando…" : `Buscar em ${settings.city}`}
-              </Button>
             </CardContent>
           </Card>
 
-          {error && (
-            <Alert variant="destructive">
-              <AlertCircle />
-              <AlertTitle>Erro na busca</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
+          <section className="space-y-2">
+            <h2 className="text-sm font-medium text-muted-foreground">
+              Abrir busca pronta · {settings.city} · {periodSearchText(period)}
+            </h2>
+            <div className="grid grid-cols-2 gap-2">
+              {links.map((l) => (
+                <a
+                  key={l.id}
+                  href={l.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="group flex flex-col gap-0.5 rounded-lg border bg-card p-3 text-left shadow-xs transition-colors hover:bg-accent active:scale-[0.98]"
+                >
+                  <span className="flex items-center justify-between gap-1 text-sm font-medium">
+                    {l.label}
+                    <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />
+                  </span>
+                  <span className="line-clamp-2 text-xs text-muted-foreground">{l.hint}</span>
+                </a>
+              ))}
+            </div>
+          </section>
 
-          {loading ? (
-            <div className="space-y-3">
-              <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                {LOADING_MESSAGES[msgIndex]} (pode levar até 1–2 min)
-              </p>
-              {[0, 1, 2].map((i) => (
-                <Card key={i} className="gap-3 py-4">
-                  <CardHeader className="px-4">
-                    <Skeleton className="h-5 w-24" />
-                    <Skeleton className="h-5 w-3/4" />
+          <section className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                <Newspaper className="size-4" />
+                Notícias dos últimos {days} dias
+              </h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={newsLoading}
+                onClick={() => setReload((n) => n + 1)}
+              >
+                <RefreshCw className={newsLoading ? "animate-spin" : undefined} />
+                Atualizar
+              </Button>
+            </div>
+
+            {newsLoading ? (
+              [0, 1, 2, 3].map((i) => (
+                <Card key={i} className="gap-2 py-3">
+                  <CardContent className="space-y-2 px-4">
                     <Skeleton className="h-4 w-full" />
-                  </CardHeader>
-                  <CardContent className="px-4">
-                    <Skeleton className="h-12 w-full" />
+                    <Skeleton className="h-4 w-2/3" />
+                    <Skeleton className="h-3 w-24" />
                   </CardContent>
                 </Card>
-              ))}
-            </div>
-          ) : last ? (
-            <section className="space-y-3">
-              <div className="flex items-baseline justify-between gap-2">
-                <h2 className="font-medium">
-                  {last.events.length} evento{last.events.length === 1 ? "" : "s"} · {last.label}
-                </h2>
-                <span className="text-xs text-muted-foreground">
-                  {last.place} ·{" "}
-                  {format(new Date(last.searchedAt), "dd/MM HH:mm", { locale: ptBR })}
-                </span>
-              </div>
-              {last.summary && (
-                <p className="rounded-lg border bg-muted/40 p-3 text-sm">{last.summary}</p>
-              )}
-              {last.events.length === 0 && (
-                <p className="py-8 text-center text-sm text-muted-foreground">
-                  Nada encontrado para esse período. Tente ampliar as datas.
-                </p>
-              )}
-              {last.events.map((ev) => (
-                <EventCard
-                  key={ev.id}
-                  event={ev}
-                  saved={savedIds.has(ev.id)}
-                  onToggleSave={toggleSave}
-                />
-              ))}
-              <p className="pb-6 text-center text-xs text-muted-foreground">
-                Resultados gerados por IA a partir de buscas na web. Confirme sempre na fonte.
+              ))
+            ) : news?.status === "error" ? (
+              <Alert variant="destructive">
+                <AlertCircle />
+                <AlertDescription>{news.message}</AlertDescription>
+              </Alert>
+            ) : news?.items.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                Nenhuma notícia recente sobre isso em {settings.city}. Use os atalhos acima.
               </p>
-            </section>
-          ) : (
-            <div className="py-10 text-center text-sm text-muted-foreground">
-              <Radar className="mx-auto mb-3 size-10 opacity-40" />
-              Escolha o período e toque em buscar para ver eventos, shows e manifestações
-              em {settings.city}.
-            </div>
-          )}
+            ) : (
+              news?.items.map((item) => {
+                const isSaved = savedUrls.has(item.url)
+                return (
+                  <Card key={item.id} className="gap-2 py-3">
+                    <CardHeader className="px-4">
+                      <CardTitle className="text-[15px] leading-snug font-medium">
+                        <a href={item.url} target="_blank" rel="noreferrer" className="hover:underline">
+                          {item.title}
+                        </a>
+                      </CardTitle>
+                      <CardDescription className="text-xs">
+                        {[
+                          item.source,
+                          item.publishedAt &&
+                            formatDistanceToNow(new Date(item.publishedAt), {
+                              locale: ptBR,
+                              addSuffix: true,
+                            }),
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </CardDescription>
+                      <CardAction className="flex">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Compartilhar"
+                          onClick={() => shareText(item.title, `${item.title}\n${item.url}`)}
+                        >
+                          <Share2 />
+                        </Button>
+                        <Button
+                          variant={isSaved ? "default" : "ghost"}
+                          size="icon"
+                          aria-label={isSaved ? "Remover dos salvos" : "Salvar"}
+                          onClick={() => saveNews(item)}
+                        >
+                          {isSaved ? <BookmarkCheck /> : <Bookmark />}
+                        </Button>
+                      </CardAction>
+                    </CardHeader>
+                  </Card>
+                )
+              })
+            )}
+          </section>
         </TabsContent>
 
+        {/* ------------------------------ SALVOS ------------------------------ */}
         <TabsContent value="salvos" className="space-y-3 pb-6">
+          <Button className="w-full" onClick={() => setEditing(newSavedEvent())}>
+            <Plus /> Adicionar evento
+          </Button>
+
           {saved.length === 0 ? (
             <div className="py-10 text-center text-sm text-muted-foreground">
               <Bookmark className="mx-auto mb-3 size-10 opacity-40" />
-              Toque no marcador de um evento para salvá-lo aqui. Fica guardado só neste
-              aparelho.
+              Salve notícias na aba Buscar ou adicione um evento que você viu no Instagram,
+              WhatsApp etc. Fica guardado só neste aparelho.
             </div>
           ) : (
             <>
-              {upcomingSaved.map((ev) => (
-                <EventCard key={ev.id} event={ev} saved onToggleSave={toggleSave} />
+              {upcoming.map((ev) => (
+                <SavedCard
+                  key={ev.id}
+                  event={ev}
+                  city={`${settings.city} ${settings.state}`}
+                  onEdit={() => setEditing(ev)}
+                  onDelete={() => setSaved((p) => p.filter((e) => e.id !== ev.id))}
+                />
               ))}
-              {pastSaved.length > 0 && (
+              {past.length > 0 && (
                 <>
                   <div className="flex items-center justify-between pt-2">
                     <h3 className="text-sm font-medium text-muted-foreground">
-                      Já aconteceram ({pastSaved.length})
+                      Já aconteceram ({past.length})
                     </h3>
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() =>
-                        setSaved((prev) => prev.filter((e) => (e.endDate ?? e.date) >= today))
-                      }
+                      onClick={() => setSaved((p) => p.filter((e) => !e.date || e.date >= today))}
                     >
                       <Trash2 /> Limpar
                     </Button>
                   </div>
                   <div className="space-y-3 opacity-60">
-                    {pastSaved.map((ev) => (
-                      <EventCard key={ev.id} event={ev} saved onToggleSave={toggleSave} />
+                    {past.map((ev) => (
+                      <SavedCard
+                        key={ev.id}
+                        event={ev}
+                        city={`${settings.city} ${settings.state}`}
+                        onEdit={() => setEditing(ev)}
+                        onDelete={() => setSaved((p) => p.filter((e) => e.id !== ev.id))}
+                      />
                     ))}
                   </div>
                 </>
@@ -296,6 +406,104 @@ export function EventsApp() {
           )}
         </TabsContent>
       </Tabs>
+
+      <SavedEventDialog event={editing} onClose={() => setEditing(null)} onSave={upsert} />
     </div>
+  )
+}
+
+function SavedCard({
+  event,
+  city,
+  onEdit,
+  onDelete,
+}: {
+  event: SavedEvent
+  city: string
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  const text = [
+    `📍 ${event.title}`,
+    event.date && `🗓 ${formatDay(event.date)}${event.time ? ` às ${event.time}` : ""}`,
+    event.place && `📌 ${event.place}`,
+    event.notes && `📝 ${event.notes}`,
+    event.url,
+  ]
+    .filter(Boolean)
+    .join("\n")
+
+  return (
+    <Card className="gap-3 py-4">
+      <CardHeader className="px-4">
+        <CardTitle className="text-base leading-snug">{event.title}</CardTitle>
+        {event.source && <CardDescription className="text-xs">{event.source}</CardDescription>}
+        <CardAction className="flex">
+          <Button variant="ghost" size="icon" aria-label="Editar" onClick={onEdit}>
+            <Pencil />
+          </Button>
+          <Button variant="ghost" size="icon" aria-label="Excluir" onClick={onDelete}>
+            <Trash2 />
+          </Button>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="space-y-2 px-4 text-sm">
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          {event.date ? (
+            <span className="flex items-center gap-1.5">
+              <CalendarDays className="size-4 text-muted-foreground" />
+              {formatDay(event.date)}
+            </span>
+          ) : (
+            <button
+              onClick={onEdit}
+              className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline"
+            >
+              <CalendarDays className="size-4" /> Sem data — toque para adicionar
+            </button>
+          )}
+          {event.time && (
+            <span className="flex items-center gap-1.5">
+              <Clock className="size-4 text-muted-foreground" />
+              {event.time}
+            </span>
+          )}
+        </div>
+        {event.place && (
+          <p className="flex items-start gap-1.5">
+            <MapPin className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            {event.place}
+          </p>
+        )}
+        {event.notes && (
+          <p className="rounded-md border bg-muted/50 p-2.5 text-[13px] whitespace-pre-wrap">
+            {event.notes}
+          </p>
+        )}
+      </CardContent>
+      <CardFooter className="flex flex-wrap gap-2 px-4">
+        {event.place && (
+          <Button variant="outline" size="sm" asChild>
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${event.place}, ${city}`)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <Navigation /> Mapa
+            </a>
+          </Button>
+        )}
+        {event.url && (
+          <Button variant="outline" size="sm" asChild>
+            <a href={event.url} target="_blank" rel="noreferrer">
+              <ExternalLink /> Abrir
+            </a>
+          </Button>
+        )}
+        <Button variant="outline" size="sm" onClick={() => shareText(event.title, text)}>
+          <Share2 /> Compartilhar
+        </Button>
+      </CardFooter>
+    </Card>
   )
 }

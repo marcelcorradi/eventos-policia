@@ -1,6 +1,6 @@
 // Service worker simples: permite instalar o app e abrir a tela offline.
 // As buscas (/api) sempre vão para a rede.
-const CACHE = "radar-v1"
+const CACHE = "radar-v2"
 const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png"]
 
 self.addEventListener("install", (event) => {

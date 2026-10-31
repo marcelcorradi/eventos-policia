@@ -28,9 +28,9 @@ const UFS = [
   "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
 ]
 
-export type Settings = { city: string; state: string; accessCode: string }
+export type Settings = { city: string; state: string }
 
-export const DEFAULT_SETTINGS: Settings = { city: "Itaúna", state: "MG", accessCode: "" }
+export const DEFAULT_SETTINGS: Settings = { city: "Itaúna", state: "MG" }
 
 export function SettingsSheet({
   settings,
@@ -59,8 +59,8 @@ export function SettingsSheet({
       </SheetTrigger>
       <SheetContent side="bottom" className="rounded-t-xl">
         <SheetHeader>
-          <SheetTitle>Configurações</SheetTitle>
-          <SheetDescription>Cidade usada nas buscas. Fica salvo só neste aparelho.</SheetDescription>
+          <SheetTitle>Cidade</SheetTitle>
+          <SheetDescription>Cidade usada nas buscas. Fica guardada só neste aparelho.</SheetDescription>
         </SheetHeader>
         <form
           className="grid gap-4 px-4"
@@ -97,16 +97,6 @@ export function SettingsSheet({
                 </SelectContent>
               </Select>
             </div>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="code">Código de acesso</Label>
-            <Input
-              id="code"
-              type="password"
-              value={draft.accessCode}
-              onChange={(e) => setDraft({ ...draft, accessCode: e.target.value })}
-              placeholder="Se o app estiver protegido"
-            />
           </div>
           <SheetFooter className="px-0">
             <Button type="submit">Salvar</Button>
