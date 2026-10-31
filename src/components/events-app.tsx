@@ -61,6 +61,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocalStorage } from "@/hooks/use-local-storage"
 import { buildLinks } from "@/lib/links"
+import { fetchNews, newsQuery } from "@/lib/news"
 import { TOPICS, type NewsItem, type TopicKey } from "@/lib/topics"
 
 type NewsState =
@@ -105,18 +106,8 @@ export function EventsApp() {
 
   React.useEffect(() => {
     const ctrl = new AbortController()
-    const qs = new URLSearchParams({
-      city: settings.city,
-      topic,
-      days: String(days),
-      ...(appliedKeyword ? { q: appliedKeyword } : {}),
-    })
-    fetch(`/api/news?${qs}`, { signal: ctrl.signal })
-      .then(async (res) => {
-        const data = await res.json().catch(() => null)
-        if (!res.ok || !data) throw new Error(data?.error ?? "Falha ao carregar notícias.")
-        setNews({ key: newsKey, status: "ok", items: data.items })
-      })
+    fetchNews(newsQuery(settings.city, topic, days, appliedKeyword), ctrl.signal)
+      .then((items) => setNews({ key: newsKey, status: "ok", items }))
       .catch((e: unknown) => {
         if (ctrl.signal.aborted) return
         setNews({

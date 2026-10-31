@@ -20,12 +20,20 @@ antes de precisar ir ao local. **Gratuito, sem cadastro e sem chave de API.**
 - Cidade configurável (padrão **Itaúna - MG**), tema claro/escuro automático
 - Interface com [shadcn/ui](https://ui.shadcn.com)
 
-## Publicar (Vercel, grátis)
+## Publicação (GitHub Pages)
 
-1. Entre em https://vercel.com com a conta do GitHub
-2. *Add New → Project* → escolha este repositório → *Deploy* (não precisa
-   configurar nada)
-3. Abra o link gerado (ex.: `eventos-policia.vercel.app`) no celular
+O site é estático. A cada push em `main` (ou no branch de desenvolvimento), o
+workflow `.github/workflows/deploy.yml` gera o site e publica no branch
+`gh-pages`. Endereço: **https://marcelcorradi.github.io/eventos-policia/**
+
+Configuração única no GitHub (dá para fazer pelo celular):
+1. *Settings → General → Danger Zone → Change visibility → Public*
+   (o GitHub Pages grátis só funciona em repositório público)
+2. *Settings → Pages → Source: Deploy from a branch → `gh-pages` / `(root)` → Save*
+
+As notícias são lidas do RSS do Google Notícias através de serviços públicos
+gratuitos de CORS (allorigins, corsproxy.io, rss2json). Se todos falharem, os
+atalhos de busca continuam funcionando.
 
 ## Instalar no celular
 
@@ -43,7 +51,7 @@ npm run dev
 
 | Caminho | O quê |
 |---|---|
-| `src/app/api/news/route.ts` | Lê o RSS do Google Notícias (precisa do servidor por causa de CORS) |
+| `src/lib/news.ts` | Lê o RSS do Google Notícias (com serviços de CORS) |
 | `src/lib/links.ts` | Monta os atalhos de busca |
 | `src/lib/topics.ts` | Assuntos e termos de busca |
 | `src/components/events-app.tsx` | Tela principal (buscar + salvos) |

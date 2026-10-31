@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 
 import { Providers } from "@/components/providers"
+import { BASE_PATH } from "@/lib/base-path"
 import "./globals.css"
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] })
@@ -11,10 +12,11 @@ export const metadata: Metadata = {
   title: "Radar de Eventos",
   description: "Eventos, shows e manifestações na cidade — para planejamento de policiamento.",
   applicationName: "Radar de Eventos",
+  manifest: `${BASE_PATH}/manifest.webmanifest`,
   appleWebApp: { capable: true, title: "Radar", statusBarStyle: "default" },
   icons: {
-    icon: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
-    apple: "/icons/apple-touch-icon.png",
+    icon: [{ url: `${BASE_PATH}/icons/icon-192.png`, sizes: "192x192", type: "image/png" }],
+    apple: `${BASE_PATH}/icons/apple-touch-icon.png`,
   },
 }
 
